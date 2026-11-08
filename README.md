@@ -13,16 +13,25 @@ Patrouillen-Polizei gesehen zu werden!
   (jedes Haus birgt **0–100 Münzen** 💰).
 - Die Stadt ist ein echter Stadtplan: gewundene Straßen, **Kurven**,
   **Sackgassen** und **Abzweigungen**.
-- Polizisten (und bei Ultra 3 🐕 Hunde) haben ein sichtbares
+- Polizisten (und Fußgänger) haben ein sichtbares
   **Blickfeld** – die Häuser blockieren die Sicht, Verstecken funktioniert!
 - **10 % der Häuser** haben eine **Alarmanlage 🚨**: Beim Einbruch kommt die
   Polizei, der erste Polizist vor Ort stoppt den Alarm.
-- Bei **Ultra** verraten die Hunde deine Position an die Polizei.
+- Fußgänger sehen dich und verraten deine Position an die Polizei.
 
 ## Features
 
-- 4 Schwierigkeitsgrade: 🙂 Einfach · 😐 Mittel · 😈 Schwer · 🤯 Ultra
-- Einstellbare Kartengröße (Standard 10×10)
+- 4 Schwierigkeits-Presets (füllen nur die Regler vor – alles ist anpassbar):
+
+  | Stufe | Alarmanlagen | Polizisten | Polizei-Tempo | Fußgänger |
+  |---|---|---|---|---|
+  | 🙂 Einfach | 5 % | 2 | 70 % | 1 |
+  | 😐 Mittel | 10 % | 3 | 100 % | 0 |
+  | 😈 Schwer | 20 % | 4 | 110 % | 1 |
+  | 🤯 Ultra | 10 % | 3 | 85 % | 3 |
+
+- Einstellbare Regler: Alarmanlagen (%), Anzahl/Tempo der Polizisten,
+  Anzahl/Tempo der Fußgänger, Kartengröße (Standard 10×10)
 - Prozedural generiertes Straßennetz (jeder Spielstart neu)
 - 4 Haus-Typen im Skizzen-Look
 - WebAudio-Sirene und Soundeffekte

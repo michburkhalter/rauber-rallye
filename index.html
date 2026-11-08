@@ -84,6 +84,18 @@
       </select>
       <button id="startBtn">▶️ Spiel starten</button>
     </div>
+    <div class="row" id="paramsRow">
+      <span>🚨 Alarm: <b id="alarmVal">10</b>%</span>
+      <input type="range" id="alarmPct" min="0" max="30" value="10" style="width:80px">
+      <span>👮 Cops: <b id="copsVal">3</b></span>
+      <input type="range" id="copsNum" min="1" max="8" value="3" style="width:80px">
+      <span>👮 Tempo: <b id="copSpeedVal">100</b>%</span>
+      <input type="range" id="copSpeedPct" min="50" max="150" value="100" style="width:80px">
+      <span>🚶 Gänger: <b id="pedsVal">0</b></span>
+      <input type="range" id="pedsNum" min="0" max="5" value="0" style="width:80px">
+      <span>🚶 Tempo: <b id="pedSpeedVal">100</b>%</span>
+      <input type="range" id="pedSpeedPct" min="50" max="150" value="100" style="width:80px">
+    </div>
     <div id="help">
       Du bist der 🟤 Räuber. Bewege dich mit <b>WASD</b> oder den <b>Pfeiltasten</b> –
       du bleibst automatisch in den Straßen unterwegs. Die Stadt ist ein echter
@@ -93,7 +105,10 @@
       sieht alles, das <b style="color:#f9a825">gelbe</b> ist deins. Häuser blockieren die Sicht.
       Achtung: <b>10 % der Häuser haben eine Alarmanlage 🚨</b> – der erste Polizist
       vor Ort stoppt den Alarm, der Rest sucht weiter!
-      Bei <b>Ultra</b> laufen 3 🐕 Hundespaziergänger mit, die dich verraten!
+      Die Regler oben bestimmen Alarmanlagen (%), Anzahl/Tempo der Polizisten
+      und Anzahl/Tempo der 🚶 Fußgänger. Das <b>Schwierigkeits-Dropdown</b>
+      füllt nur die Regler mit passenden Werten vor – alles ist anpassbar!
+      Fußgänger sehen dich und verraten deine Position an die Polizei!
     </div>
   </div>
 
@@ -115,6 +130,16 @@
   const alarmInfoEl = document.getElementById('alarmInfo');
   const sizeInput = document.getElementById('sizeInput');
   const diffSelect = document.getElementById('diffSelect');
+  const alarmPctEl = document.getElementById('alarmPct');
+  const copsNumEl = document.getElementById('copsNum');
+  const copSpeedPctEl = document.getElementById('copSpeedPct');
+  const pedsNumEl = document.getElementById('pedsNum');
+  const pedSpeedPctEl = document.getElementById('pedSpeedPct');
+  const alarmValEl = document.getElementById('alarmVal');
+  const copsValEl = document.getElementById('copsVal');
+  const copSpeedValEl = document.getElementById('copSpeedVal');
+  const pedsValEl = document.getElementById('pedsVal');
+  const pedSpeedValEl = document.getElementById('pedSpeedVal');
   const startScreen = document.getElementById('startScreen');
   const overlay = document.getElementById('overlay');
   const overlayTitle = document.getElementById('overlayTitle');
@@ -126,7 +151,7 @@
   const COP_SPEED = 90;
   const ROBBER_VIEW = 170;
   const COP_VIEW = 140;
-  const DOG_VIEW = 135;
+  const PED_VIEW = 135;
   const VIEW_ANGLE = Math.PI * 0.42;
 
   const HOUSE_TYPES = ['haus', 'blocks', 'laden', 'turm'];
@@ -144,7 +169,7 @@
   let curveTiles = [];  // begehbare "Kurven"-Kacheln für die Zeichnung
   let robber = null;
   let cops = [];
-  let dogs = [];
+  let peds = [];         // Fußgänger (verraten den Räuber)
   let coins = 0;
   let robbedCount = 0;
   let running = false;
@@ -153,9 +178,42 @@
   let keys = {};
   let floaters = [];
   let particles = [];
-  let difficulty = 'mittel';
-  let copSpeedFactor = 1;
+  let params = { alarm: 10, cops: 3, copSpeed: 1, peds: 0, pedSpeed: 1 };
+  let alarmProb = 0.1;
   let report = null;
+
+  // Schwierigkeits-Presets (füllen nur die Regler vor)
+  const PRESETS = {
+    leicht:  { alarm: 5,  cops: 2, copSpeed: 70,  peds: 1, pedSpeed: 100 },
+    mittel:  { alarm: 10, cops: 3, copSpeed: 100, peds: 0, pedSpeed: 100 },
+    schwer:  { alarm: 20, cops: 4, copSpeed: 110, peds: 1, pedSpeed: 100 },
+    ultra:   { alarm: 10, cops: 3, copSpeed: 85,  peds: 3, pedSpeed: 100 }
+  };
+  function applyPreset(name) {
+    const p = PRESETS[name];
+    if (!p) return;
+    alarmPctEl.value = p.alarm; copsNumEl.value = p.cops;
+    copSpeedPctEl.value = p.copSpeed; pedsNumEl.value = p.peds;
+    pedSpeedPctEl.value = p.pedSpeed;
+    refreshParamLabels();
+  }
+  function refreshParamLabels() {
+    alarmValEl.textContent = alarmPctEl.value;
+    copsValEl.textContent = copsNumEl.value;
+    copSpeedValEl.textContent = copSpeedPctEl.value;
+    pedsValEl.textContent = pedsNumEl.value;
+    pedSpeedValEl.textContent = pedSpeedPctEl.value;
+  }
+  function readParams() {
+    params = {
+      alarm: parseInt(alarmPctEl.value),
+      cops: parseInt(copsNumEl.value),
+      copSpeed: parseInt(copSpeedPctEl.value) / 100,
+      peds: parseInt(pedsNumEl.value),
+      pedSpeed: parseInt(pedSpeedPctEl.value) / 100
+    };
+    alarmProb = params.alarm / 100;
+  }
 
   // ---------- Sound ----------
   let audioCtx = null, sirenTimer = null, sirenHigh = false;
@@ -285,7 +343,7 @@
           color2: PALETTE[Math.floor(Math.random() * PALETTE.length)],
           rot: (Math.random() - 0.5) * 0.06,
           robbed: false,
-          alarm: Math.random() < (difficulty === 'schwer' ? 0.2 : 0.1),
+          alarm: Math.random() < alarmProb,
           alarmStart: 0, alarmEnd: 0,
           seed: Math.random() * 1000
         };
@@ -298,8 +356,7 @@
   // ---------- Initialisierung ----------
   function init() {
     G = Math.max(5, Math.min(30, parseInt(sizeInput.value) || 10));
-    difficulty = diffSelect.value;
-    copSpeedFactor = difficulty === 'leicht' ? 0.7 : difficulty === 'ultra' ? 0.85 : 1;
+    readParams();
     WT = 2 * G + 1;
     worldPx = WT * TILE;
 
@@ -327,14 +384,17 @@
         if (isWalk(tx, ty)) { const c = tileCenter(tx, ty); robber = { x: c.x, y: c.y, r: 11, angle: 0, fx: 1, fy: 0, moving: false, target: null }; break outer; }
     }
 
-    // Polizisten & Hunde als Walker auf dem Netz
-    const numCops = Math.min(5, 2 + Math.floor(G / 8));
+    // Polizisten & Fußgänger als Walker auf dem Netz
     cops = [];
-    for (let c = 0; c < numCops; c++) cops.push(spawnWalker((COP_SPEED + Math.random() * 20) * copSpeedFactor, 12));
+    for (let c = 0; c < params.cops; c++) {
+      const cop = spawnWalker((COP_SPEED + Math.random() * 20) * params.copSpeed, 12);
+      if (cop) cops.push(cop);
+    }
 
-    dogs = [];
-    if (difficulty === 'ultra') {
-      for (let i = 0; i < 3; i++) dogs.push(spawnWalker(75 + Math.random() * 15, 10));
+    peds = [];
+    for (let i = 0; i < params.peds; i++) {
+      const p = spawnWalker((70 + Math.random() * 15) * params.pedSpeed, 10);
+      if (p) { p.shirt = PED_SHIRTS[i % PED_SHIRTS.length]; peds.push(p); }
     }
     report = null;
 
@@ -347,7 +407,7 @@
     updateHUD();
   }
 
-  // ---------- Walker (Polizisten & Hunde) ----------
+  // ---------- Walker (Polizisten & Fußgänger) ----------
   function walkNeighbors(tx, ty) {
     const out = [];
     if (isWalk(tx + 1, ty)) out.push({ x: tx + 1, y: ty });
@@ -488,10 +548,10 @@
     return rayDist(cop.x, cop.y, ang, dist) >= dist - 16;
   }
 
-  function dogSeesRobber(d) {
+  function pedSeesRobber(d) {
     const dx = robber.x - d.x, dy = robber.y - d.y;
     const dist = Math.hypot(dx, dy);
-    if (dist > DOG_VIEW || dist < 1) return false;
+    if (dist > PED_VIEW || dist < 1) return false;
     const ang = Math.atan2(dy, dx);
     if (Math.abs(angleDiff(ang, d.angle)) > VIEW_ANGLE) return false;
     return rayDist(d.x, d.y, ang, dist) >= dist - 14;
@@ -586,11 +646,20 @@
         return;
       }
     }
+    // auf dem Weg zum Ziel etwas schneller (Eile)
+    const orig = cop.speed;
+    cop.speed = orig * 1.3;
     walkerStep(cop, dt, goal);
+    cop.speed = orig;
   }
 
-  function updateDog(d, dt) {
+  function updatePed(d, dt) {
+    // kurz nach dem Bellen aufgeregt schneller
+    const speedMul = performance.now() < (d.excitedUntil || 0) ? 1.7 : 1;
+    const origSpeed = d.speed;
+    d.speed = origSpeed * speedMul;
     walkerStep(d, dt, null);
+    d.speed = origSpeed;
   }
 
   // ---------- Update ----------
@@ -628,16 +697,18 @@
       }
     }
 
-    // Hunde
-    for (const d of dogs) {
-      updateDog(d, dt);
-      if (dogSeesRobber(d)) {
+    // Fußgänger
+    for (const d of peds) {
+      updatePed(d, dt);
+      if (pedSeesRobber(d)) {
         const wasActive = report && report.until > performance.now();
-        report = { x: robber.x, y: robber.y, until: performance.now() + 10000 };
+        report = { x: robber.x, y: robber.y, until: performance.now() + 20000 };
+        d.excitedUntil = performance.now() + 3000; // Gänger rennt kurz hinterher
         if (!wasActive) {
-          floaters.push({ x: d.x, y: d.y - 18, txt: '🐕 Wuff!', life: 1.4, color: '#8d6e63' });
+          floaters.push({ x: d.x, y: d.y - 18, txt: '🚶 VERPETZT!', life: 1.6, color: '#d32f2f' });
           tone(300, 0.12, 'square', 0.07);
           tone(220, 0.12, 'square', 0.06);
+          tone(180, 0.2, 'sawtooth', 0.06);
         }
       }
     }
@@ -647,7 +718,7 @@
     const now = performance.now();
     const anyAlarm = houseList.some(h => h.alarmEnd > now);
     if (anyAlarm) { startSiren(); alarmInfoEl.textContent = '🚨 ALARM!'; }
-    else if (report) { stopSiren(); alarmInfoEl.textContent = '🐕 VERRATEN!'; }
+    else if (report) { stopSiren(); alarmInfoEl.textContent = '📍 VERRATEN!'; }
     else { stopSiren(); alarmInfoEl.textContent = ''; }
 
     updateFloaters(dt);
@@ -744,11 +815,11 @@
     // Sichtfelder
     drawVision(robber, 'rgba(255, 245, 180, 0.35)', ROBBER_VIEW);
     for (const cop of cops) drawVision(cop, 'rgba(255, 100, 100, 0.28)', COP_VIEW);
-    for (const d of dogs) drawVision(d, 'rgba(160, 120, 90, 0.22)', DOG_VIEW);
+    for (const d of peds) drawVision(d, 'rgba(160, 120, 90, 0.22)', PED_VIEW);
 
-    // Polizisten, Hunde & Räuber
+    // Polizisten, Fußgänger & Räuber
     for (const cop of cops) drawCop(cop);
-    for (const d of dogs) drawDog(d);
+    for (const d of peds) drawPed(d);
     drawRobber(robber);
 
     // Verratene Position markieren
@@ -764,6 +835,17 @@
       ctx.font = 'bold 22px sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('❓', report.x, report.y);
+
+      // roter Alarm-Rand pulsierend
+      const pulse = 0.35 + 0.3 * Math.sin(performance.now() / 120);
+      const grad = ctx.createRadialGradient(
+        worldPx / 2, worldPx / 2, worldPx * 0.35,
+        worldPx / 2, worldPx / 2, worldPx * 0.75
+      );
+      grad.addColorStop(0, 'rgba(255,0,0,0)');
+      grad.addColorStop(1, `rgba(255,30,30,${pulse})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, worldPx, worldPx);
     }
 
     // Partikel & schwebende Texte
@@ -928,23 +1010,25 @@
     ctx.restore();
   }
 
-  function drawDog(d) {
+  const PED_SHIRTS = ['#ef5350','#42a5f5','#66bb6a','#ab47bc','#ffa726','#26c6da','#ec407a','#9ccc65'];
+  function drawPed(d) {
     ctx.save();
     ctx.translate(d.x, d.y);
     ctx.rotate(d.angle);
-    ctx.fillStyle = '#a1887f';
+    // Körper (Hemd)
+    ctx.fillStyle = d.shirt || '#ef5350';
     ctx.beginPath(); ctx.arc(0, 0, d.r, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#4e342e'; ctx.lineWidth = 2.5; ctx.stroke();
-    ctx.fillStyle = '#4e342e';
+    ctx.strokeStyle = '#37474f'; ctx.lineWidth = 2.5; ctx.stroke();
+    // Kopf in Blickrichtung
+    ctx.fillStyle = '#ffccbc';
+    ctx.beginPath(); ctx.arc(d.r * 0.45, 0, d.r * 0.45, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#37474f'; ctx.lineWidth = 2; ctx.stroke();
+    // Beine (zwei Striche nach hinten)
+    ctx.strokeStyle = '#37474f'; ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.moveTo(d.r - 3, 0); ctx.lineTo(d.r + 5, -4); ctx.lineTo(d.r + 5, 4);
-    ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = '#d32f2f'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(0, 0, d.r - 2, -0.6, 0.6); ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(3, -4, 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#212121';
-    ctx.beginPath(); ctx.arc(3.5, -4, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.moveTo(-d.r * 0.5, -d.r * 0.5); ctx.lineTo(-d.r * 1.3, -d.r * 0.7);
+    ctx.moveTo(-d.r * 0.5, d.r * 0.5); ctx.lineTo(-d.r * 1.3, d.r * 0.7);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -969,6 +1053,14 @@
     overlayTitle.textContent = title;
     overlayText.textContent = text;
     overlay.classList.add('show');
+  }
+
+  function showStart() {
+    running = false;
+    caught = false;
+    stopSiren(); alarmInfoEl.textContent = '';
+    overlay.classList.remove('show');
+    startScreen.style.display = 'flex';
   }
 
   function start() {
@@ -1003,7 +1095,13 @@
 
   document.getElementById('startBtn').addEventListener('click', start);
   document.getElementById('againBtn').addEventListener('click', start);
-  document.getElementById('restartBtn').addEventListener('click', start);
+  document.getElementById('restartBtn').addEventListener('click', showStart);
+
+  // Regler & Presets
+  diffSelect.addEventListener('change', () => applyPreset(diffSelect.value));
+  for (const el of [alarmPctEl, copsNumEl, copSpeedPctEl, pedsNumEl, pedSpeedPctEl])
+    el.addEventListener('input', refreshParamLabels);
+  refreshParamLabels();
 
   init();
   requestAnimationFrame(loop);
