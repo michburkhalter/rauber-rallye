@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Räuber-Rallye – Ein Kinderspiel</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Comic Sans MS", "Segoe UI", sans-serif;
+    background: #1b2a4a;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 16px;
+    user-select: none;
+  }
+  h1 { font-size: 2rem; margin-bottom: 4px; text-shadow: 2px 2px 0 #00000044; }
+  #hud {
+    display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+    background: #ffffff18; border-radius: 14px; padding: 8px 18px; margin-bottom: 10px;
+  }
+  #hud .score { font-size: 1.3rem; font-weight: bold; color: #ffd54f; }
+  #hud button, #startScreen button {
+    font-family: inherit; font-size: 1rem; font-weight: bold;
+    background: #ff7043; color: #fff; border: none; border-radius: 10px;
+    padding: 8px 18px; cursor: pointer;
+  }
+  #hud button:hover, #startScreen button:hover { background: #ff8a65; }
+  #sizeInput { width: 60px; font-size: 1rem; padding: 4px; border-radius: 8px; border: none; text-align: center; }
+  #wrap { position: relative; }
+  canvas {
+    border-radius: 12px; box-shadow: 0 8px 30px #00000066;
+    max-width: 96vw; max-height: 78vh; background: #3a3f4b;
+  }
+  #overlay {
+    position: absolute; inset: 0; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    background: #000000aa; border-radius: 12px; text-align: center; padding: 20px;
+  }
+  #overlay.show { display: flex; }
+  #overlay h2 { font-size: 2rem; margin-bottom: 10px; }
+  #overlay p { font-size: 1.2rem; margin-bottom: 18px; }
+  #startScreen {
+    position: absolute; inset: 0; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    background: #0e1a33ee; border-radius: 12px; text-align: center; padding: 24px;
+  }
+  #startScreen h2 { font-size: 1.8rem; margin-bottom: 14px; }
+  #startScreen label { font-size: 1.1rem; margin-bottom: 6px; }
+  #startScreen .row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; }
+  #startScreen input { width: 70px; font-size: 1.2rem; padding: 6px; border-radius: 8px; border: none; text-align: center; }
+  #help { font-size: 0.95rem; opacity: 0.85; margin-top: 14px; max-width: 520px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<h1>🏃‍♂️💨 Räuber-Rallye</h1>
+<div id="hud">
+  <span class="score">⭐ <span id="coins">0</span>/12</span>
+  <span>🗺️ <span id="mapSize">25×25</span></span>
+  <span>🎯 Hilf: Sammle alle Münzen, ohne erwischt zu werden!</span>
+  <button id="restartBtn">🔄 Neustart</button>
+</div>
+
+<div id="wrap">
+  <canvas id="game"></canvas>
+
+  <div id="startScreen">
+    <h2>Willkommen bei der Räuber-Rallye!</h2>
+    <label for="sizeInput">Wie groß soll die Stadt sein? (Blöcke)</label>
+    <div class="row">
+      <input type="number" id="sizeInput" min="10" max="40" value="25">
+      <button id="startBtn">▶️ Spiel starten</button>
+    </div>
+    <div id="help">
+      Du bist der 🟤 Räuber. Bewege dich mit <b>WASD</b> oder den <b>Pfeiltasten</b>.
+      Sammle alle 🪙 Münzen! Pass auf die 👮 Polizisten auf – sie patrouillieren die Straßen
+      und sehen alles in ihrem <b style="color:#ff5252">roten Blickfeld</b>. Dein eigenes
+      Blickfeld ist <b style="color:#ffd54f">gelb</b>. Die Häuser blockieren die Sicht –
+      versteck dich dahinter! Wer von der Polizei gesehen wird, verliert.
+    </div>
+  </div>
+
+  <div id="overlay">
+    <h2 id="overlayTitle"></h2>
+    <p id="overlayText"></p>
+    <button id="againBtn">🔁 Nochmal spielen</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const coinsEl = document.getElementById('coins');
+  const mapSizeEl = document.getElementById('mapSize');
+  const sizeInput = document.getElementById('sizeInput');
+  const startScreen = document.getElementById('startScreen');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const overlayText = document.getElementById('overlayText');
+
+  // ---------- Konfiguration ----------
+  const HOUSE = 34;          // Größe eines Hauses (px)
+  const STREET = 26;         // Breite der Straße (px)
+  const PITCH = HOUSE + STREET;
+  const ROBBER_SPEED = 150;
+  const COP_SPEED = 95;
+  const ROBBER_VIEW = 170;
+  const COP_VIEW = 150;
+  const VIEW_ANGLE = Math.PI * 0.45; // halber Öffnungswinkel des Kegels
+  const NUM_COINS = 12;
+  const NUM_COPS = 3;
+
+  // ---------- Spielzustand ----------
+  let grid = 25;
+  let houses = [];           // {x,y,w,h,color}
+  let worldW = 0, worldH = 0;
+  let robber = null;
+  let cops = [];
+  let coins = [];
+  let score = 0;
+  let running = false;
+  let caught = false;
+  let keys = {};
+
+  // ---------- Initialisierung ----------
+  function init() {
+    grid = Math.max(10, Math.min(40, parseInt(sizeInput.value) || 25));
+    worldW = grid * PITCH + STREET;
+    worldH = worldW;
+    houses = [];
+    const palette = ['#ffb3c1','#a8e6cf','#ffd3b6','#c7ceea','#b5ead7','#ffdac1','#caffbf','#ffafcc'];
+    let k = 0;
+    for (let i = 0; i < grid; i++) {
+      for (let j = 0; j < grid; j++) {
+        houses.push({
+          x: i * PITCH,
+          y: j * PITCH,
+          w: HOUSE, h: HOUSE,
+          color: palette[(i * 7 + j * 3 + k++) % palette.length]
+        });
+      }
+    }
+
+    canvas.width = worldW;
+    canvas.height = worldH;
+
+    // Räuber startet in der linken unteren Straßenecke
+    robber = {
+      x: STREET / 2 + 10, y: worldH - STREET / 2 - 10,
+      r: 11, angle: -Math.PI / 4, moving: false
+    };
+
+    // Polizisten auf zufälligen Straßen
+    cops = [];
+    const centers = [STREET / 2];
+    for (let i = 0; i < grid; i++) centers.push(i * PITCH + HOUSE + STREET / 2);
+    centers.push(worldW - STREET / 2);
+    for (let c = 0; c < NUM_COPS; c++) {
+      const lane = centers[Math.floor(Math.random() * centers.length)];
+      cops.push(spawnCop(lane, c % 2 === 0));
+    }
+
+    // Münzen auf Straßen platzieren (mit Abstand zu Häusern)
+    coins = [];
+    let tries = 0;
+    while (coins.length < NUM_COINS && tries < 500) {
+      tries++;
+      const x = STREET / 2 + Math.random() * (worldW - STREET);
+      const y = STREET / 2 + Math.random() * (worldH - STREET);
+      if (collides(x, y, 12)) continue;
+      if (Math.hypot(x - robber.x, y - robber.y) < 120) continue;
+      if (coins.some(co => Math.hypot(co.x - x, co.y - y) < 80)) continue;
+      coins.push({ x, y, taken: false, phase: Math.random() * Math.PI * 2 });
+    }
+
+    score = 0;
+    caught = false;
+    coinsEl.textContent = '0';
+    mapSizeEl.textContent = `${grid}×${grid}`;
+  }
+
+  function spawnCop(lane, vertical) {
+    // lane = Position der Straße, vertikal oder horizontal
+    let x, y;
+    if (vertical) {
+      x = lane;
+      y = STREET / 2 + Math.random() * (worldH - STREET);
+    } else {
+      x = STREET / 2 + Math.random() * (worldW - STREET);
+      y = lane;
+    }
+    return {
+      x, y, r: 12,
+      angle: vertical ? Math.PI / 2 : 0,
+      dir: Math.random() < 0.5 ? 1 : -1,
+      vertical,
+      speed: COP_SPEED + Math.random() * 15,
+      phase: Math.random() * Math.PI * 2
+    };
+  }
+
+  // ---------- Kollision ----------
+  function collides(x, y, r) {
+    // nur gegen Häuser prüfen (Straßen sind frei)
+    for (const h of houses) {
+      const nx = Math.max(h.x, Math.min(x, h.x + h.w));
+      const ny = Math.max(h.y, Math.min(y, h.y + h.h));
+      const dx = x - nx, dy = y - ny;
+      if (dx * dx + dy * dy < r * r) return true;
+    }
+    return false;
+  }
+
+  function moveCircle(e, dx, dy) {
+    const r = e.r;
+    if (!collides(e.x + dx, e.y, r)) e.x += dx;
+    if (!collides(e.x, e.y + dy, r)) e.y += dy;
+    e.x = Math.max(r, Math.min(worldW - r, e.x));
+    e.y = Math.max(r, Math.min(worldH - r, e.y));
+  }
+
+  // ---------- Sichtfeld ----------
+  // Strahl gegen alle Häuser (AABB), liefert Sichtweite in px
+  function rayDist(ox, oy, angle, maxDist) {
+    const dx = Math.cos(angle), dy = Math.sin(angle);
+    let best = maxDist;
+    for (const h of houses) {
+      let tmin = 0, tmax = best;
+      // X-Achse
+      if (Math.abs(dx) < 1e-9) {
+        if (ox < h.x || ox > h.x + h.w) continue;
+      } else {
+        let t1 = (h.x - ox) / dx, t2 = (h.x + h.w - ox) / dx;
+        if (t1 > t2) [t1, t2] = [t2, t1];
+        tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+        if (tmin > tmax) continue;
+      }
+      // Y-Achse
+      if (Math.abs(dy) < 1e-9) {
+        if (oy < h.y || oy > h.y + h.h) continue;
+      } else {
+        let t1 = (h.y - oy) / dy, t2 = (h.y + h.h - oy) / dy;
+        if (t1 > t2) [t1, t2] = [t2, t1];
+        tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+        if (tmin > tmax) continue;
+      }
+      const t = Math.max(tmin, 0);
+      if (t > 0 && t < best) best = t;
+    }
+    return best;
+  }
+
+  function drawVision(e, color, maxDist) {
+    const rays = 26;
+    ctx.beginPath();
+    ctx.moveTo(e.x, e.y);
+    for (let i = 0; i <= rays; i++) {
+      const a = e.angle - VIEW_ANGLE + (2 * VIEW_ANGLE * i) / rays;
+      const d = rayDist(e.x, e.y, a, maxDist);
+      ctx.lineTo(e.x + Math.cos(a) * d, e.y + Math.sin(a) * d);
+    }
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function seesPlayer(cop) {
+    const dx = robber.x - cop.x, dy = robber.y - cop.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > COP_VIEW || dist < 1) return false;
+    let da = Math.atan2(dy, dx) - cop.angle;
+    while (da > Math.PI) da -= 2 * Math.PI;
+    while (da < -Math.PI) da += 2 * Math.PI;
+    if (Math.abs(da) > VIEW_ANGLE) return false;
+    return rayDist(cop.x, cop.y, Math.atan2(dy, dx), dist - cop.r - 2) >= dist - cop.r - robber.r - 4;
+  }
+
+  // ---------- Update ----------
+  function update(dt) {
+    if (caught) return;
+
+    // Räuber bewegen
+    let mx = 0, my = 0;
+    if (keys['a'] || keys['arrowleft']) mx -= 1;
+    if (keys['d'] || keys['arrowright']) mx += 1;
+    if (keys['w'] || keys['arrowup']) my -= 1;
+    if (keys['s'] || keys['arrowdown']) my += 1;
+    robber.moving = mx !== 0 || my !== 0;
+    if (robber.moving) {
+      const len = Math.hypot(mx, my);
+      const vx = (mx / len) * ROBBER_SPEED * dt;
+      const vy = (my / len) * ROBBER_SPEED * dt;
+      moveCircle(robber, vx, vy);
+      robber.angle = Math.atan2(vy, vx);
+    }
+
+    // Polizisten patrouillieren
+    for (const cop of cops) {
+      const step = cop.speed * dt * cop.dir;
+      if (cop.vertical) {
+        cop.y += step;
+        cop.angle = cop.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+        // an Block-/Straßenende umkehren (in der Mitte der Straßen bleiben)
+        if (collides(cop.x, cop.y, cop.r)) {
+          cop.dir *= -1;
+          cop.y -= step * 2;
+        }
+      } else {
+        cop.x += step;
+        cop.angle = cop.dir > 0 ? 0 : Math.PI;
+        if (collides(cop.x, cop.y, cop.r)) {
+          cop.dir *= -1;
+          cop.x -= step * 2;
+        }
+      }
+      cop.x = Math.max(cop.r, Math.min(worldW - cop.r, cop.x));
+      cop.y = Math.max(cop.r, Math.min(worldH - cop.r, cop.y));
+      if (seesPlayer(cop)) { caught = true; return; }
+    }
+
+    // Münzen einsammeln
+    for (const c of coins) {
+      if (!c.taken && Math.hypot(c.x - robber.x, c.y - robber.y) < 24) {
+        c.taken = true;
+        score++;
+        coinsEl.textContent = score;
+        if (score >= NUM_COINS) {
+          caught = true;
+          showOverlay('🎉 Super gemacht!', `Du hast alle ${NUM_COINS} Münzen gesammelt und bist schlauer als die Polizei!`);
+          return;
+        }
+      }
+    }
+  }
+
+  // ---------- Zeichnen ----------
+  function draw() {
+    // Straßen
+    ctx.fillStyle = '#3a3f4b';
+    ctx.fillRect(0, 0, worldW, worldH);
+
+    // Häuser
+    for (const h of houses) {
+      ctx.fillStyle = h.color;
+      roundRect(h.x + 1, h.y + 1, h.w - 2, h.h - 2, 6);
+      ctx.fill();
+      ctx.strokeStyle = '#00000033';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // Dach-Detail
+      ctx.fillStyle = '#00000018';
+      roundRect(h.x + 7, h.y + 7, h.w - 14, h.h - 14, 4);
+      ctx.fill();
+    }
+
+    // Münzen
+    for (const c of coins) {
+      if (c.taken) continue;
+      const bob = Math.sin(performance.now() / 300 + c.phase) * 3;
+      ctx.fillStyle = '#ffd54f';
+      ctx.strokeStyle = '#c8a415';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y + bob, 8, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#c8a415';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('★', c.x, c.y + bob);
+    }
+
+    // Sichtfelder (unter den Figuren)
+    drawVision(robber, 'rgba(255, 235, 130, 0.18)', ROBBER_VIEW);
+    for (const cop of cops) drawVision(cop, 'rgba(255, 82, 82, 0.18)', COP_VIEW);
+
+    // Polizisten
+    for (const cop of cops) drawCop(cop);
+
+    // Räuber
+    drawRobber(robber);
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawCop(cop) {
+    ctx.save();
+    ctx.translate(cop.x, cop.y);
+    ctx.rotate(cop.angle);
+    // Körper
+    ctx.fillStyle = '#2e7dff';
+    ctx.beginPath(); ctx.arc(0, 0, cop.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#123a8a'; ctx.lineWidth = 2; ctx.stroke();
+    // Blickrichtung
+    ctx.fillStyle = '#123a8a';
+    ctx.beginPath();
+    ctx.moveTo(cop.r - 2, 0); ctx.lineTo(cop.r + 7, -5); ctx.lineTo(cop.r + 7, 5);
+    ctx.closePath(); ctx.fill();
+    // Mütze
+    ctx.fillStyle = '#123a8a';
+    ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffd54f';
+    ctx.fillRect(3, -1.5, 4, 3);
+    ctx.restore();
+  }
+
+  function drawRobber(robber) {
+    ctx.save();
+    ctx.translate(robber.x, robber.y);
+    ctx.rotate(robber.angle);
+    // Body (braun, wie eine Räuberjacke)
+    ctx.fillStyle = '#795548';
+    ctx.beginPath(); ctx.arc(0, 0, robber.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#3e2723'; ctx.lineWidth = 2; ctx.stroke();
+    // Blickrichtung
+    ctx.fillStyle = '#3e2723';
+    ctx.beginPath();
+    ctx.moveTo(robber.r - 2, 0); ctx.lineTo(robber.r + 6, -4); ctx.lineTo(robber.r + 6, 4);
+    ctx.closePath(); ctx.fill();
+    // Maske
+    ctx.fillStyle = '#212121';
+    ctx.fillRect(-3, -6, 8, 12);
+    ctx.restore();
+  }
+
+  // ---------- Spielablauf ----------
+  function showOverlay(title, text) {
+    overlayTitle.textContent = title;
+    overlayText.textContent = text;
+    overlay.classList.add('show');
+  }
+
+  function start() {
+    init();
+    startScreen.style.display = 'none';
+    overlay.classList.remove('show');
+    running = true;
+  }
+
+  function endCaught() {
+    showOverlay('😱 Aua!', 'Die Polizei hat dich gesehen! Versteck dich hinter den Häusern – die blockieren den Blick.');
+  }
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    if (running && !caught) {
+      update(dt);
+      if (caught && score < NUM_COINS) endCaught();
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- Events ----------
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase())) e.preventDefault();
+  });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+  document.getElementById('startBtn').addEventListener('click', start);
+  document.getElementById('againBtn').addEventListener('click', start);
+  document.getElementById('restartBtn').addEventListener('click', start);
+
+  // Startbildschirm vorab zeichnen
+  init();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
