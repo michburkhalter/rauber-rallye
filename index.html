@@ -138,7 +138,9 @@
       Die Regler oben bestimmen Alarmanlagen (%), Anzahl/Tempo der Polizisten
       und Anzahl/Tempo der 🚶 Fußgänger. Das <b>Schwierigkeits-Dropdown</b>
       füllt nur die Regler mit passenden Werten vor – alles ist anpassbar!
-      Fußgänger sehen dich und verraten deine Position an die Polizei!
+      Footgänger sehen dich und verraten deine Position an die Polizei!
+      In der Mitte thront die 🏦 <b>BANK</b> mit <b>500 Münzen</b> –
+      bewacht von einem Spezialpolizisten, der im Kreis patrouilliert!
     </div>
   </div>
 
@@ -206,6 +208,8 @@
   let robber = null;
   let cops = [];
   let peds = [];         // Fußgänger (verraten den Räuber)
+  let bank = null;       // especial Haus mit 500 Münzen
+  let guard = null;      // Spezialpolizist, patrouilliert um die Bank
   let coins = 0;
   let robbedCount = 0;
   let running = false;
@@ -421,6 +425,33 @@
         if (isWalk(tx, ty)) { const c = tileCenter(tx, ty); robber = { x: c.x, y: c.y, r: 11, angle: 0, fx: 1, fy: 0, moving: false, target: null }; break outer; }
     }
 
+    // Bank: HausClosest zur Kartenmitte, bewacht von einem Spezialpolizisten
+    bank = null; guard = null;
+    let bd = Infinity;
+    const bankScore = h => {
+      let wn = 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
+        if (isWalk(h.tx + dx, h.ty + dy)) wn++;
+      return wn;
+    };
+    for (const h of houseList) {
+      if (bankScore(h) < 2) continue; // Bank braucht Straßen ringsum
+      const d = Math.hypot(h.px + TILE / 2 - worldPx / 2, h.py + TILE / 2 - worldPx / 2);
+      if (d < bd) { bd = d; bank = h; }
+    }
+    if (!bank) { // Fallback: nächstes Haus egal was
+      for (const h of houseList) {
+        const d = Math.hypot(h.px + TILE / 2 - worldPx / 2, h.py + TILE / 2 - worldPx / 2);
+        if (d < bd) { bd = d; bank = h; }
+      }
+    }
+    if (bank) {
+      bank.isBank = true;
+      bank.bankCoins = 500;
+      bank.alarm = false; // statt Alarm: Guard
+      buildGuard(bank);
+    }
+
     // Polizisten & Fußgänger als Walker auf dem Netz
     cops = [];
     for (let c = 0; c < params.cops; c++) {
@@ -511,6 +542,96 @@
     }
   }
 
+  // ---------- Bank-Wache ----------
+  // Der Guard patrouilliert die begehbaren Kacheln rings um die Bank
+  function buildGuard(h) {
+    const tiles = [];
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const tx = h.tx + dx, ty = h.ty + dy;
+        if (isWalk(tx, ty)) tiles.push({ tx, ty, a: Math.atan2(dy, dx) });
+      }
+    }
+    if (tiles.length < 3) return; // Bank zu isoliert -> kein Guard
+    tiles.sort((p, q) => p.a - q.a);
+    const c = tileCenter(tiles[0].tx, tiles[0].ty);
+    guard = {
+      x: c.x, y: c.y, r: 13, angle: 0, speed: 75,
+      ring: tiles, ri: 0,
+      ct: { x: tiles[0].tx, y: tiles[0].ty }, // aktuelles Tile
+      path: null, pi: 0                        // BFS-Weg zum nächsten Ring-Tile
+    };
+  }
+
+  // BFS über begehbare Kacheln: Weg von (sx,sy) nach (tx,ty)
+  function bfsPath(sx, sy, tx, ty) {
+    if (sx === tx && sy === ty) return [];
+    const prev = new Map();
+    const key = (x, y) => y * WT + x;
+    const q = [[sx, sy]];
+    prev.set(key(sx, sy), null);
+    while (q.length) {
+      const [x, y] = q.shift();
+      if (x === tx && y === ty) {
+        // Pfad zurückbauen (Ziel zuerst)
+        const path = [];
+        let k = key(x, y);
+        while (prev.get(k) !== null) {
+          const px = k % WT, py = Math.floor(k / WT);
+          path.unshift({ x: px, y: py });
+          k = prev.get(k);
+        }
+        return path.map(t => tileCenter(t.x, t.y));
+      }
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (!isWalk(nx, ny) || prev.has(key(nx, ny))) continue;
+        prev.set(key(nx, ny), key(x, y));
+        q.push([nx, ny]);
+      }
+    }
+    return null; // nicht erreichbar
+  }
+
+  function updateGuard(dt) {
+    if (!guard || guard.ring.length < 2) return;
+
+    // Neuer Weg berechnen, wenn keiner mehr ansteht
+    if (!guard.path || guard.pi >= guard.path.length) {
+      const t = guard.ring[(guard.ri + 1) % guard.ring.length];
+      const path = bfsPath(guard.ct.x, guard.ct.y, t.tx, t.ty);
+      if (!path || path.length === 0) {
+        guard.ri = (guard.ri + 1) % guard.ring.length; // Ring-Tile überspringen
+        guard.path = null;
+        return;
+      }
+      guard.path = path;
+      guard.pi = 0;
+      guard.ct = { x: t.tx, y: t.ty }; // Ziel-Tile vorgemerkt
+    }
+
+    // Entlang des Weges gehen
+    const c = guard.path[guard.pi];
+    const dx = c.x - guard.x, dy = c.y - guard.y;
+    const dist = Math.hypot(dx, dy);
+    const step = guard.speed * dt;
+    if (dist <= step) {
+      guard.x = c.x; guard.y = c.y;
+      guard.pi++;
+      guard.angle = Math.atan2(dy, dx);
+    } else {
+      guard.x += (dx / dist) * step;
+      guard.y += (dy / dist) * step;
+      guard.angle = Math.atan2(dy, dx);
+    }
+    // Ziel erreicht -> nächstes Ring-Tile ansteuern
+    if (guard.pi >= guard.path.length) {
+      guard.ri = (guard.ri + 1) % guard.ring.length;
+      guard.path = null;
+    }
+  }
+
   // ---------- Kollision (Räuber) ----------
   function collides(x, y, r) {
     const x0 = Math.floor((x - r) / TILE), x1 = Math.floor((x + r) / TILE);
@@ -576,10 +697,11 @@
     return d;
   }
 
-  function copSeesRobber(cop) {
+  function copSeesRobber(cop, viewDist) {
+    const maxView = viewDist || COP_VIEW;
     const dx = robber.x - cop.x, dy = robber.y - cop.y;
     const dist = Math.hypot(dx, dy);
-    if (dist > COP_VIEW || dist < 1) return false;
+    if (dist > maxView || dist < 1) return false;
     const ang = Math.atan2(dy, dx);
     if (Math.abs(angleDiff(ang, cop.angle)) > VIEW_ANGLE) return false;
     return rayDist(cop.x, cop.y, ang, dist) >= dist - 16;
@@ -613,7 +735,7 @@
     }
     h.robbed = true;
     robbedCount++;
-    const value = Math.floor(Math.random() * 101);
+    const value = h.isBank ? h.bankCoins : Math.floor(Math.random() * 101);
     coins += value;
     const cx = h.px + TILE / 2, cy = h.py + TILE / 2;
     if (h.alarm) {
@@ -624,9 +746,9 @@
     }
     floaters.push({
       x: cx, y: cy,
-      txt: value === 0 ? 'Nix!' : '+' + value,
-      life: 1.4,
-      color: value === 0 ? '#8d6e63' : '#f9a825'
+      txt: h.isBank ? `🏦 BANK! +${value}` : (value === 0 ? 'Nix!' : '+' + value),
+      life: 1.6,
+      color: h.isBank || value > 0 ? '#f9a825' : '#8d6e63'
     });
     for (let i = 0; i < 10; i++) {
       const a = Math.random() * Math.PI * 2;
@@ -733,6 +855,14 @@
         showOverlay('😱 Aua!', `Die Polizei hat dich gesehen! Du hattest ${coins} Münzen. Versteck dich hinter Häusern!`);
         return;
       }
+    }
+
+    // Bank-Wache
+    updateGuard(dt);
+    if (guard && copSeesRobber(guard, COP_VIEW / 2)) {
+      caught = true;
+      showOverlay('😱 Aua!', `Der Bankwächter hat dich gesehen! Du hattest ${coins} Münzen.`);
+      return;
     }
 
     // Fußgänger
@@ -854,10 +984,12 @@
     drawVision(robber, 'rgba(255, 245, 180, 0.35)', ROBBER_VIEW);
     for (const cop of cops) drawVision(cop, 'rgba(255, 100, 100, 0.28)', COP_VIEW);
     for (const d of peds) drawVision(d, 'rgba(160, 120, 90, 0.22)', PED_VIEW);
+    if (guard) drawVision(guard, 'rgba(120, 80, 200, 0.25)', COP_VIEW / 2);
 
-    // Polizisten, Fußgänger & Räuber
+    // Polizisten, Fußgänger, Bankwächter & Räuber
     for (const cop of cops) drawCop(cop);
     for (const d of peds) drawPed(d);
+    if (guard) drawGuard(guard);
     drawRobber(robber);
 
     // Verratene Position markieren
@@ -924,6 +1056,8 @@
     ctx.translate(cx, cy);
     ctx.rotate(h.rot);
     ctx.translate(-cx, -cy);
+
+    if (h.isBank) { drawBank(h); ctx.restore(); return; }
 
     const x = h.px + 4, y = h.py + 4, s = TILE - 8;
     const m = 5;
@@ -1031,6 +1165,76 @@
   }
 
   function drawHouse(h) { sketchHouse(h); }
+
+  // Bank: klassizistisches Gebäude mit Säulen und 500 Münzen
+  function drawBank(h) {
+    const x = h.px + 4, y = h.py + 4, s = TILE - 8;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = INK;
+
+    // Hauptkörper
+    ctx.fillStyle = '#d7ccc8';
+    roundRect(x, y + s * 0.28, s, s * 0.72, 3); ctx.fill(); ctx.stroke();
+    // Giebel
+    ctx.fillStyle = '#8d6e63';
+    ctx.beginPath();
+    ctx.moveTo(x - 2, y + s * 0.3);
+    ctx.lineTo(x + s / 2, y + 1);
+    ctx.lineTo(x + s + 2, y + s * 0.3);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // Säulen
+    ctx.fillStyle = '#fff8e1';
+    for (let i = 0; i < 3; i++) {
+      const cx2 = x + s * (0.2 + i * 0.3);
+      ctx.fillRect(cx2 - s * 0.06, y + s * 0.42, s * 0.12, s * 0.5);
+      ctx.strokeRect(cx2 - s * 0.06, y + s * 0.42, s * 0.12, s * 0.5);
+    }
+    // Tür
+    ctx.fillStyle = '#5d4037';
+    ctx.fillRect(x + s / 2 - s * 0.09, y + s * 0.68, s * 0.18, s * 0.32);
+    // Türmchen/Dach.first:
+    ctx.fillStyle = '#ffd54f';
+    ctx.beginPath(); ctx.arc(x + s / 2, y + s * 0.12, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+
+    if (h.robbed) {
+      ctx.fillStyle = 'rgba(60,50,40,0.4)';
+      roundRect(x, y, s, s, 3); ctx.fill();
+      ctx.strokeStyle = INK;
+      ctx.beginPath();
+      ctx.moveTo(x + s * 0.3, y + 2); ctx.lineTo(x + s * 0.45, y + s * 0.45); ctx.lineTo(x + s * 0.38, y + s * 0.75);
+      ctx.stroke();
+      ctx.fillStyle = '#8d6e63';
+      ctx.font = 'bold 9px "Comic Sans MS", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('LEER', x + s / 2, y + s * 0.6);
+    } else {
+      // 500-Münzen-Schild
+      ctx.fillStyle = '#ffd54f';
+      ctx.strokeStyle = INK; ctx.lineWidth = 1.5;
+      roundRect(x + s * 0.28, y + s * 0.55, s * 0.44, s * 0.16, 3); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#4a3b2a';
+      ctx.font = 'bold 8px "Comic Sans MS", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('500', x + s / 2, y + s * 0.66);
+    }
+  }
+
+  function drawGuard(g) {
+    ctx.save();
+    ctx.translate(g.x, g.y);
+    ctx.rotate(g.angle);
+    ctx.fillStyle = '#311b92';
+    ctx.beginPath(); ctx.arc(0, 0, g.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#ffd54f'; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.fillStyle = '#ffd54f';
+    ctx.beginPath();
+    ctx.moveTo(g.r - 2, 0); ctx.lineTo(g.r + 7, -5); ctx.lineTo(g.r + 7, 5);
+    ctx.closePath(); ctx.fill();
+    // Mütze
+    ctx.fillStyle = '#ffd54f';
+    ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 
   function drawCop(cop) {
     ctx.save();

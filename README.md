@@ -20,6 +20,8 @@ Patrouillen-Polizei gesehen zu werden!
   Beim Einbruch kommt die Polizei, der erste Polizist vor Ort stoppt den Alarm.
 - **Fußgänger** sehen dich und verraten deine Position 20 Sekunden lang
   an die Polizei – mit rotem Alarm-Rand und angeregtem Hinterherlaufen!
+- Mitten in der Stadt thront die **🏦 Bank** mit **500 Münzen** –
+  bewacht von einem Spezialpolizisten, der im Kreis um die Bank patrouilliert.
 
 ## Features
 
