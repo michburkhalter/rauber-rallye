@@ -33,7 +33,7 @@
   #wrap { position: relative; }
   canvas {
     border-radius: 12px; box-shadow: 0 8px 30px #00000066;
-    max-width: 96vw; max-height: 78vh; background: #e6dcc6;
+    max-width: 96vw; max-height: 78vh; background: #e7e0cc;
   }
   #overlay {
     position: absolute; inset: 0; display: none;
@@ -50,9 +50,9 @@
   }
   #startScreen h2 { font-size: 1.8rem; margin-bottom: 14px; }
   #startScreen label { font-size: 1.1rem; margin-bottom: 6px; }
-  #startScreen .row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; }
+  #startScreen .row { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; justify-content: center; }
   #startScreen input { width: 70px; font-size: 1.2rem; padding: 6px; border-radius: 8px; border: none; text-align: center; }
-  #help { font-size: 0.95rem; opacity: 0.9; margin-top: 14px; max-width: 540px; line-height: 1.5; }
+  #help { font-size: 0.95rem; opacity: 0.9; margin-top: 14px; max-width: 560px; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -72,7 +72,6 @@
   <div id="startScreen">
     <h2>Willkommen bei der Räuber-Rallye!</h2>
     <p style="font-size:1.15rem;margin-bottom:12px">Ziel: <b>1000 Münzen</b> ergattern! 💰</p>
-    <label for="sizeInput">Wie groß soll die Stadt sein? (Häuser pro Seite)</label>
     <div class="row">
       <label for="sizeInput" style="margin:0">Stadtgröße:</label>
       <input type="number" id="sizeInput" min="5" max="30" value="10">
@@ -87,18 +86,14 @@
     </div>
     <div id="help">
       Du bist der 🟤 Räuber. Bewege dich mit <b>WASD</b> oder den <b>Pfeiltasten</b> –
-      du bleibst automatisch in den Straßen unterwegs.
-      Steh mit dem Rücken zum Haus, das du ausrauben willst, und drücke <b>LEERTASTE</b>.
-      Jedes Haus birgt <b>0–100 Münzen</b>! 💰
-      Pass auf die 👮 Polizisten auf – sie patrouillieren die Straßen und sehen alles in ihrem
-      <b style="color:#d32f2f">roten Blickfeld</b>. Dein eigenes Blickfeld ist
-      <b style="color:#f9a825">gelb</b>. Die Häuser blockieren die Sicht –
-      versteck dich dahinter! Wer gesehen wird, fliegt raus.
-      Achtung: <b>10 % der Häuser haben eine Alarmanlage 🚨</b> – beim Einbruch
-      kommt die Polizei. Der erste Polizist vor Ort stoppt den Alarm,
-      der Rest sucht sofort weiter!
-      Bei <b>Ultra</b> laufen auch 3 🐕 Hundespaziergänger mit – sie sehen
-      dich und verraten deine Position an die Polizei!
+      du bleibst automatisch in den Straßen unterwegs. Die Stadt ist ein echter
+      <b>Stadtplan</b>: gewundene Straßen, Kurven, Sackgassen und Abzweigungen!
+      Steh vor einem Haus und drücke <b>LEERTASTE</b> zum Ausrauben (0–100 Münzen!).
+      Pass auf die 👮 Polizisten auf – ihr <b style="color:#d32f2f">rotes Blickfeld</b>
+      sieht alles, das <b style="color:#f9a825">gelbe</b> ist deins. Häuser blockieren die Sicht.
+      Achtung: <b>10 % der Häuser haben eine Alarmanlage 🚨</b> – der erste Polizist
+      vor Ort stoppt den Alarm, der Rest sucht weiter!
+      Bei <b>Ultra</b> laufen 3 🐕 Hundespaziergänger mit, die dich verraten!
     </div>
   </div>
 
@@ -126,38 +121,43 @@
   const overlayText = document.getElementById('overlayText');
 
   // ---------- Konfiguration ----------
-  const TILE = 36;                 // Größe eines Rasterfelds (px)
+  const TILE = 36;
   const ROBBER_SPEED = 140;
   const COP_SPEED = 90;
   const ROBBER_VIEW = 170;
   const COP_VIEW = 140;
+  const DOG_VIEW = 135;
   const VIEW_ANGLE = Math.PI * 0.42;
 
   const HOUSE_TYPES = ['haus', 'blocks', 'laden', 'turm'];
   const PALETTE = ['#ffb3c1','#a8e6cf','#ffd3b6','#c7ceea','#b5ead7','#ffdac1','#caffbf','#ffafcc','#ffc8dd'];
+  const EXTRA_EDGE_PROB = 0.35;   // zusätzliche Verbindungen neben dem Grundgerüst
+  const CURVE_PROB = 0.4;         // Anteil der 90°-Ecken, die als Kurve gebaut werden
 
   // ---------- Spielzustand ----------
-  let G = 10;               // Häuser pro Seite
-  let WT = 0;               // Tiles pro Seite = 2G+1
+  let G = 10;
+  let WT = 0;
   let worldPx = 0;
-  let houses = [];          // 2D-Array [ty][tx] -> Haus oder null
+  let walk = [];        // [ty][tx] -> begehbar (Straße)
+  let houses = [];      // [ty][tx] -> ausraubbares Haus oder null
   let houseList = [];
+  let curveTiles = [];  // begehbare "Kurven"-Kacheln für die Zeichnung
   let robber = null;
   let cops = [];
+  let dogs = [];
   let coins = 0;
   let robbedCount = 0;
   let running = false;
   let caught = false;
   let won = false;
   let keys = {};
-  let floaters = [];        // schwebende Texte (+37, Nix!)
-  let particles = [];       // Münz-Partikel
+  let floaters = [];
+  let particles = [];
   let difficulty = 'mittel';
   let copSpeedFactor = 1;
-  let dogs = [];            // Hundespaziergänger (nur Ultra)
-  let report = null;        // {x, y, until} – verratene Räuber-Position
+  let report = null;
 
-  // ---------- Sound (WebAudio) ----------
+  // ---------- Sound ----------
   let audioCtx = null, sirenTimer = null, sirenHigh = false;
   function ensureAudio() {
     try {
@@ -186,20 +186,113 @@
   function stopSiren() {
     if (sirenTimer) { clearInterval(sirenTimer); sirenTimer = null; }
   }
-  const ALARM_TIME = 6000; // 6 Sekunden
+  const ALARM_TIME = 6000;
 
   // ---------- Hilfsfunktionen ----------
-  function isHouseTile(tx, ty) {
-    return tx % 2 === 1 && ty % 2 === 1;
+  function isWalk(tx, ty) {
+    return tx >= 0 && ty >= 0 && tx < WT && ty < WT && walk[ty][tx];
   }
-
-  function tileHouse(tx, ty) {
+  function tileCenter(tx, ty) {
+    return { x: (tx + 0.5) * TILE, y: (ty + 0.5) * TILE };
+  }
+  function houseAt(tx, ty) {
     if (tx < 0 || ty < 0 || tx >= WT || ty >= WT) return null;
     return houses[ty][tx];
   }
 
-  function rand(seedObj) { // simpler PRNG pro Haus über Math.random reicht
-    return Math.random();
+  // ---------- Straßen-Netz generieren ----------
+  // Knoten = even×even Kacheln, Kanten = Straßensegmente dazwischen.
+  // Ein zufälliger Spannbaum garantiert Verbindung; extra Kanten + Kurven
+  // ergeben Abzweigungen, Sackgassen und T-Kreuzungen.
+  function genStreets() {
+    walk = Array.from({ length: WT }, () => new Array(WT).fill(false));
+    houses = Array.from({ length: WT }, () => new Array(WT).fill(null));
+    houseList = [];
+    curveTiles = [];
+
+    const N = G + 1; // Knoten pro Seite
+    const nid = (i, j) => j * N + i;
+
+    // alle möglichen Kanten zwischen benachbarten Knoten
+    let edges = [];
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        if (i + 1 < N) edges.push({ a: nid(i, j), b: nid(i + 1, j), i, j, ni: i + 1, nj: j, horiz: true });
+        if (j + 1 < N) edges.push({ a: nid(i, j), b: nid(i, j + 1), i, j, ni: i, nj: j + 1, horiz: false });
+      }
+    }
+    // mischen (Fisher-Yates)
+    for (let i = edges.length - 1; i > 0; i--) {
+      const k = Math.floor(Math.random() * (i + 1));
+      [edges[i], edges[k]] = [edges[k], edges[i]];
+    }
+
+    // Kruskal: Spannbaum -> garantiert zusammenhängendes Netz
+    const parent = new Array(N * N);
+    for (let i = 0; i < N * N; i++) parent[i] = i;
+    const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+    const union = (a, b) => { parent[find(a)] = find(b); };
+
+    const active = [];
+    for (const e of edges) {
+      if (find(e.a) !== find(e.b)) { union(e.a, e.b); e.used = true; active.push(e); }
+      else if (Math.random() < EXTRA_EDGE_PROB) { e.used = true; active.push(e); }
+    }
+
+    // Knoten und Segmente begehbar machen
+    for (let j = 0; j < N; j++)
+      for (let i = 0; i < N; i++)
+        walk[2 * j][2 * i] = true;
+    for (const e of active) {
+      if (e.horiz) walk[2 * e.j][2 * e.i + 1] = true;
+      else walk[2 * e.j + 1][2 * e.i] = true;
+    }
+
+    // Einfallsrichtungs-Liste pro Knoten für Kurven-Entscheidung
+    const nodeDirs = new Map(); // nid -> [[dx,dy],...]
+    for (const e of active) {
+      const d = e.horiz ? [Math.sign(e.ni - e.i), 0] : [0, Math.sign(e.nj - e.j)];
+      // für Knoten a zeigt d auf b, für Knoten b zeigt -d auf a
+      nodeDirs.set(e.a, [...(nodeDirs.get(e.a) || []), d]);
+      nodeDirs.set(e.b, [...(nodeDirs.get(e.b) || []), [-d[0], -d[1]]]);
+    }
+
+    // Kurven: Knoten mit genau 2 senkrechten Straßen -> Ecke durch
+    // benachbarte Haus-Kachel als Kurve ersetzen, Knoten wird Block
+    for (const [id, dirs] of nodeDirs) {
+      if (dirs.length !== 2) continue;
+      const [d1, d2] = dirs;
+      if (d1[0] * d2[0] + d1[1] * d2[1] !== 0) continue; // nicht senkrecht
+      if (Math.random() >= CURVE_PROB) continue;
+      const i = id % N, j = Math.floor(id / N);
+      const ntx = 2 * i, nty = 2 * j;
+      const ctx2 = ntx + d1[0] + d2[0], cty2 = nty + d1[1] + d2[1];
+      if (ctx2 < 0 || cty2 < 0 || ctx2 >= WT || cty2 >= WT) continue;
+      walk[cty2][ctx2] = true;
+      walk[nty][ntx] = false;
+      curveTiles.push({ tx: ctx2, ty: cty2 });
+    }
+
+    // Häuser: unbebaute ungerade Kacheln
+    for (let ty = 1; ty < WT; ty += 2) {
+      for (let tx = 1; tx < WT; tx += 2) {
+        if (walk[ty][tx]) continue; // Kurven-Kachel
+        const h = {
+          tx, ty,
+          px: tx * TILE, py: ty * TILE,
+          type: HOUSE_TYPES[Math.floor(Math.random() * HOUSE_TYPES.length)],
+          color: PALETTE[Math.floor(Math.random() * PALETTE.length)],
+          color2: PALETTE[Math.floor(Math.random() * PALETTE.length)],
+          rot: (Math.random() - 0.5) * 0.06,
+          robbed: false,
+          alarm: Math.random() < (difficulty === 'schwer' ? 0.2 : 0.1),
+          alarmStart: 0, alarmEnd: 0,
+          seed: Math.random() * 1000
+        };
+        houses[ty][tx] = h;
+        houseList.push(h);
+      }
+    }
   }
 
   // ---------- Initialisierung ----------
@@ -213,55 +306,35 @@
     canvas.width = worldPx;
     canvas.height = worldPx;
 
-    houses = [];
-    houseList = [];
-    for (let ty = 0; ty < WT; ty++) {
-      houses.push(new Array(WT).fill(null));
-      for (let tx = 0; tx < WT; tx++) {
-        if (!isHouseTile(tx, ty)) continue;
-        const h = {
-          tx, ty,
-          px: tx * TILE, py: ty * TILE,
-          type: HOUSE_TYPES[Math.floor(Math.random() * HOUSE_TYPES.length)],
-          color: PALETTE[Math.floor(Math.random() * PALETTE.length)],
-          color2: PALETTE[Math.floor(Math.random() * PALETTE.length)],
-          rot: (Math.random() - 0.5) * 0.06,   // Skizzen-Wackeln
-          robbed: false,
-          alarm: Math.random() < (difficulty === 'schwer' ? 0.2 : 0.1),
-          alarmStart: 0, alarmEnd: 0,
-          seed: Math.random() * 1000
-        };
-        houses[ty][tx] = h;
-        houseList.push(h);
+    genStreets();
+
+    // Räuber: freie begehbare Kachel nahe der Ecke suchen
+    robber = null;
+    for (let r = 4; r < WT && !robber; r++) {
+      for (let dy = -r; dy <= r && !robber; dy++) {
+        for (let dx = -r; dx <= r && !robber; dx++) {
+          const tx = 2 + dx, ty = 2 + dy;
+          if (isWalk(tx, ty)) {
+            const c = tileCenter(tx, ty);
+            robber = { x: c.x, y: c.y, r: 11, angle: Math.PI / 4, fx: 1, fy: 0, moving: false, target: null };
+          }
+        }
       }
     }
+    if (!robber) { // Notfall: erste begehbare Kachel
+      outer:
+      for (let ty = 0; ty < WT; ty++) for (let tx = 0; tx < WT; tx++)
+        if (isWalk(tx, ty)) { const c = tileCenter(tx, ty); robber = { x: c.x, y: c.y, r: 11, angle: 0, fx: 1, fy: 0, moving: false, target: null }; break outer; }
+    }
 
-    // Räuber startet auf einer Straße nahe der Ecke
-    robber = {
-      x: 2.5 * TILE, y: 2.5 * TILE,
-      r: 11, angle: Math.PI / 4,
-      fx: 1, fy: 0,           // Blickrichtung (für's Ausrauben)
-      moving: false, target: null
-    };
-
-    // Polizisten: Lanes sind die geraden (Straßen-)Zeilen/-Spalten
-    const lanes = [];
-    for (let i = 0; i <= 2 * G; i += 2) lanes.push(i);
+    // Polizisten & Hunde als Walker auf dem Netz
     const numCops = Math.min(5, 2 + Math.floor(G / 8));
     cops = [];
-    for (let c = 0; c < numCops; c++) {
-      const vertical = Math.random() < 0.5;
-      const lane = lanes[Math.floor(Math.random() * lanes.length)];
-      cops.push(spawnCop(lane, vertical));
-    }
+    for (let c = 0; c < numCops; c++) cops.push(spawnWalker((COP_SPEED + Math.random() * 20) * copSpeedFactor, 12));
 
-    // Hundespaziergänger (nur Ultra-Schwierigkeit)
     dogs = [];
     if (difficulty === 'ultra') {
-      for (let i = 0; i < 3; i++) {
-        const lane = lanes[Math.floor(Math.random() * lanes.length)];
-        dogs.push(spawnDog(lane, Math.random() < 0.5));
-      }
+      for (let i = 0; i < 3; i++) dogs.push(spawnWalker(75 + Math.random() * 15, 10));
     }
     report = null;
 
@@ -274,44 +347,82 @@
     updateHUD();
   }
 
-  function spawnCop(lane, vertical) {
-    const pos = (Math.random() * (WT - 2) + 1) * TILE;
-    return {
-      x: vertical ? (lane + 0.5) * TILE : pos,
-      y: vertical ? pos : (lane + 0.5) * TILE,
-      r: 12,
-      angle: vertical ? Math.PI / 2 : 0,
-      dir: Math.random() < 0.5 ? 1 : -1,
-      vertical,
-      speed: (COP_SPEED + Math.random() * 20) * copSpeedFactor,
-      lastJunction: -1
-    };
+  // ---------- Walker (Polizisten & Hunde) ----------
+  function walkNeighbors(tx, ty) {
+    const out = [];
+    if (isWalk(tx + 1, ty)) out.push({ x: tx + 1, y: ty });
+    if (isWalk(tx - 1, ty)) out.push({ x: tx - 1, y: ty });
+    if (isWalk(tx, ty + 1)) out.push({ x: tx, y: ty + 1 });
+    if (isWalk(tx, ty - 1)) out.push({ x: tx, y: ty - 1 });
+    return out;
   }
 
-  function spawnDog(lane, vertical) {
-    const pos = (Math.random() * (WT - 2) + 1) * TILE;
-    return {
-      x: vertical ? (lane + 0.5) * TILE : pos,
-      y: vertical ? pos : (lane + 0.5) * TILE,
-      r: 10,
-      angle: vertical ? Math.PI / 2 : 0,
-      dir: Math.random() < 0.5 ? 1 : -1,
-      vertical,
-      speed: 75 + Math.random() * 15,
-      lastJunction: -1
-    };
+  function spawnWalker(speed, r) {
+    for (let tries = 0; tries < 300; tries++) {
+      const tx = Math.floor(Math.random() * WT), ty = Math.floor(Math.random() * WT);
+      if (!isWalk(tx, ty)) continue;
+      const c = tileCenter(tx, ty);
+      const w = {
+        x: c.x, y: c.y, r, angle: 0, speed,
+        cur: { x: tx, y: ty }, prev: null, nxt: null, lastDir: null
+      };
+      pickNext(w, null);
+      return w;
+    }
+    return null;
   }
 
-  // ---------- Kollision (nur gegen Häuser) ----------
+  function pickNext(w, goal) {
+    const cands = walkNeighbors(w.cur.x, w.cur.y);
+    let list = cands.filter(c => !(w.prev && c.x === w.prev.x && c.y === w.prev.y));
+    if (list.length === 0) list = cands; // Sackgasse: umkehren
+    if (list.length === 0) { w.nxt = null; return; }
+    let chosen;
+    if (goal) {
+      // Richtung zum Ziel (Alarm / Verrat)
+      let bd = Infinity;
+      for (const c of list) {
+        const cc = tileCenter(c.x, c.y);
+        const d = Math.hypot(cc.x - goal.x, cc.y - goal.y);
+        if (d < bd) { bd = d; chosen = c; }
+      }
+    } else {
+      // Patrouille: 60 % geradeaus, sonst zufällige Abzweigung
+      const s = w.lastDir ? { x: w.cur.x + w.lastDir.x, y: w.cur.y + w.lastDir.y } : null;
+      const straight = s && list.find(c => c.x === s.x && c.y === s.y);
+      if (straight && Math.random() < 0.6) chosen = straight;
+      else chosen = list[Math.floor(Math.random() * list.length)];
+    }
+    w.nxt = chosen;
+    w.lastDir = { x: chosen.x - w.cur.x, y: chosen.y - w.cur.y };
+  }
+
+  function walkerStep(w, dt, goal) {
+    if (!w.nxt) { pickNext(w, goal); if (!w.nxt) return; }
+    const c = tileCenter(w.nxt.x, w.nxt.y);
+    const dx = c.x - w.x, dy = c.y - w.y;
+    const dist = Math.hypot(dx, dy);
+    const step = w.speed * dt;
+    if (dist <= step) {
+      w.x = c.x; w.y = c.y;
+      w.prev = w.cur; w.cur = w.nxt;
+      pickNext(w, goal);
+    } else {
+      w.x += (dx / dist) * step;
+      w.y += (dy / dist) * step;
+      w.angle = Math.atan2(dy, dx);
+    }
+  }
+
+  // ---------- Kollision (Räuber) ----------
   function collides(x, y, r) {
     const x0 = Math.floor((x - r) / TILE), x1 = Math.floor((x + r) / TILE);
     const y0 = Math.floor((y - r) / TILE), y1 = Math.floor((y + r) / TILE);
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
-        const h = tileHouse(tx, ty);
-        if (!h) continue;
-        const nx = Math.max(h.px, Math.min(x, h.px + TILE));
-        const ny = Math.max(h.py, Math.min(y, h.py + TILE));
+        if (isWalk(tx, ty)) continue;
+        const nx = Math.max(tx * TILE, Math.min(x, tx * TILE + TILE));
+        const ny = Math.max(ty * TILE, Math.min(y, ty * TILE + TILE));
         const dx = x - nx, dy = y - ny;
         if (dx * dx + dy * dy < r * r) return true;
       }
@@ -320,8 +431,6 @@
   }
 
   function moveCircle(e, dx, dy) {
-    // kleinerer Kollisionsradius als die gezeichnete Figur:
-    // so bleibt man an Ecken nicht hängen und kann besser navigieren
     const cr = e.r * 0.75;
     if (dx !== 0 && !collides(e.x + dx, e.y, cr)) e.x += dx;
     if (dy !== 0 && !collides(e.x, e.y + dy, cr)) e.y += dy;
@@ -329,7 +438,7 @@
     e.y = Math.max(e.r + 2, Math.min(worldPx - e.r - 2, e.y));
   }
 
-  // ---------- Sichtfeld (DDA-Raycast über das Raster) ----------
+  // ---------- Sichtfeld (DDA-Raycast) ----------
   function rayDist(ox, oy, angle, maxDist) {
     const dx = Math.cos(angle), dy = Math.sin(angle);
     let tx = Math.floor(ox / TILE), ty = Math.floor(oy / TILE);
@@ -342,11 +451,9 @@
              : dy < 0 ? (oy - ty * TILE) / -dy : Infinity;
     let t = 0;
     while (t < maxDist) {
-      const h = tileHouse(tx, ty);
-      if (h) return t;
+      if (!isWalk(tx, ty)) return t;
       if (tMaxX < tMaxY) { t = tMaxX; tMaxX += tDeltaX; tx += stepX; }
       else              { t = tMaxY; tMaxY += tDeltaY; ty += stepY; }
-      if (tx < 0 || ty < 0 || tx >= WT || ty >= WT) return maxDist;
     }
     return maxDist;
   }
@@ -381,11 +488,20 @@
     return rayDist(cop.x, cop.y, ang, dist) >= dist - 16;
   }
 
+  function dogSeesRobber(d) {
+    const dx = robber.x - d.x, dy = robber.y - d.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > DOG_VIEW || dist < 1) return false;
+    const ang = Math.atan2(dy, dx);
+    if (Math.abs(angleDiff(ang, d.angle)) > VIEW_ANGLE) return false;
+    return rayDist(d.x, d.y, ang, dist) >= dist - 14;
+  }
+
   // ---------- Ausrauben ----------
   function frontHouse() {
     const fx = robber.x + robber.fx * TILE * 0.85;
     const fy = robber.y + robber.fy * TILE * 0.85;
-    return tileHouse(Math.floor(fx / TILE), Math.floor(fy / TILE));
+    return houseAt(Math.floor(fx / TILE), Math.floor(fy / TILE));
   }
 
   function tryRob() {
@@ -400,7 +516,7 @@
     }
     h.robbed = true;
     robbedCount++;
-    const value = Math.floor(Math.random() * 101); // 0–100
+    const value = Math.floor(Math.random() * 101);
     coins += value;
     const cx = h.px + TILE / 2, cy = h.py + TILE / 2;
     if (h.alarm) {
@@ -415,7 +531,6 @@
       life: 1.4,
       color: value === 0 ? '#8d6e63' : '#f9a825'
     });
-    // Partikel-Burst
     for (let i = 0; i < 10; i++) {
       const a = Math.random() * Math.PI * 2;
       particles.push({
@@ -431,32 +546,13 @@
       showOverlay('👑 Räuber-Meister!', `Du hast 1000 Münzen erreicht – WOW! Der Räuber ist der König der Stadt!`);
       return;
     }
-    if (robbedCount >= G * G) {
+    if (robbedCount >= houseList.length) {
       won = true; caught = true;
       showOverlay('🏆 Stadtmeister!', `Du hast alle Häuser ausgeraubt und ${coins} Münzen ergattert!`);
     }
   }
 
   // ---------- Polizisten-KI ----------
-  const DIRS = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
-
-  function copVector(cop) {
-    return cop.vertical ? { x: 0, y: cop.dir } : { x: cop.dir, y: 0 };
-  }
-
-  function setCopDir(cop, vx, vy) {
-    if (vx !== 0) {
-      cop.vertical = false; cop.dir = Math.sign(vx);
-      cop.angle = vx > 0 ? 0 : Math.PI;
-      // auf die Straßenmitte einrasten
-      cop.y = (Math.floor(cop.y / TILE) + 0.5) * TILE;
-    } else {
-      cop.vertical = true; cop.dir = Math.sign(vy);
-      cop.angle = vy > 0 ? Math.PI / 2 : -Math.PI / 2;
-      cop.x = (Math.floor(cop.x / TILE) + 0.5) * TILE;
-    }
-  }
-
   function activeAlarm(cop) {
     const now = performance.now();
     let best = null, bd = Infinity;
@@ -469,111 +565,32 @@
     return best;
   }
 
-  // Entscheidung an einer Kreuzung (beide Kachel-Indizes gerade)
-  function decideAtJunction(cop, alarm) {
-    const cur = copVector(cop);
-    let d;
-    if (alarm) {
-      // Richtung wählen, die am nächsten zum Alarm führt (keine 180°-Wende)
-      let bd = Infinity;
-      for (const cand of DIRS) {
-        if (cand.x === -cur.x && cand.y === -cur.y) continue;
-        const d1 = Math.hypot(cop.x + cand.x * TILE - alarm.x, cop.y + cand.y * TILE - alarm.y);
-        if (d1 < bd) { bd = d1; d = cand; }
-      }
-    } else if (Math.random() < 0.5) {
-      // 50 %: zufällige 90°-Abbiegung
-      const opts = cur.x !== 0 ? [{ x: 0, y: 1 }, { x: 0, y: -1 }] : [{ x: 1, y: 0 }, { x: -1, y: 0 }];
-      d = opts[Math.floor(Math.random() * opts.length)];
-    } else {
-      d = cur; // geradeaus weiter
-    }
-    if (d) setCopDir(cop, d.x, d.y);
-  }
-
-  const DOG_VIEW = 135;
-
-  function updateDog(d, dt) {
-    const step = d.speed * dt;
-    const tx = Math.floor(d.x / TILE), ty = Math.floor(d.y / TILE);
-    if (tx % 2 === 0 && ty % 2 === 0) {
-      const key = tx * 4096 + ty;
-      if (key !== d.lastJunction) {
-        d.lastJunction = key;
-        decideAtJunction(d, null); // dogs_turnen zufällig
-      }
-    } else {
-      d.lastJunction = -1;
-    }
-    if (d.vertical) {
-      d.y += d.dir * step;
-      if (d.y <= 14 || d.y >= worldPx - 14) d.dir *= -1;
-    } else {
-      d.x += d.dir * step;
-      if (d.x <= 14 || d.x >= worldPx - 14) d.dir *= -1;
-    }
-    d.x = Math.max(14, Math.min(worldPx - 14, d.x));
-    d.y = Math.max(14, Math.min(worldPx - 14, d.y));
-    d.angle = d.vertical
-      ? (d.dir > 0 ? Math.PI / 2 : -Math.PI / 2)
-      : (d.dir > 0 ? 0 : Math.PI);
-  }
-
-  function dogSeesRobber(d) {
-    const dx = robber.x - d.x, dy = robber.y - d.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > DOG_VIEW || dist < 1) return false;
-    const ang = Math.atan2(dy, dx);
-    if (Math.abs(angleDiff(ang, d.angle)) > VIEW_ANGLE) return false;
-    return rayDist(d.x, d.y, ang, dist) >= dist - 14;
+  function copGoal(cop) {
+    const alarm = activeAlarm(cop);
+    if (alarm) return alarm;
+    const now = performance.now();
+    if (report && report.until > now) return { x: report.x, y: report.y };
+    return null;
   }
 
   function updateCop(cop, dt) {
-    const step = cop.speed * dt;
-    const alarm = activeAlarm(cop);
-    const now = performance.now();
-    // Ziel: Alarm-Haus hat Vorrang, sonst verratene Räuber-Position
-    const goal = alarm ||
-      (!alarm && report && report.until > now ? { x: report.x, y: report.y } : null);
-
-    // An Kreuzungen entscheiden (nur einmal pro Kreuzung)
-    const tx = Math.floor(cop.x / TILE), ty = Math.floor(cop.y / TILE);
-    if (tx % 2 === 0 && ty % 2 === 0) {
-      const key = tx * 4096 + ty;
-      if (key !== cop.lastJunction) {
-        cop.lastJunction = key;
-        decideAtJunction(cop, goal);
-      }
-    } else {
-      cop.lastJunction = -1;
-    }
-
-    // Am Ziel „Wache stehen" – Polizist vor Ort stoppt den Alarm,
-    // bei einer Vermeldung wird die Region abgelaufen
+    const goal = copGoal(cop);
+    // Am Ziel ankommen -> Alarm stoppen bzw. Region absuchen
     if (goal) {
       const dx = goal.x - cop.x, dy = goal.y - cop.y;
       const dist = Math.hypot(dx, dy);
-      if (dist < TILE * (alarm ? 1.4 : 1.6)) {
-        if (alarm) alarm.h.alarmEnd = now;
+      if (dist < TILE * 1.6) {
+        if (goal.h) goal.h.alarmEnd = performance.now();
         else report = null;
         cop.angle = Math.atan2(dy, dx);
         return;
       }
     }
+    walkerStep(cop, dt, goal);
+  }
 
-    // Entlang der aktuellen Richtung bewegen
-    if (cop.vertical) {
-      cop.y += cop.dir * step;
-      if (cop.y <= 14 || cop.y >= worldPx - 14) cop.dir *= -1;
-    } else {
-      cop.x += cop.dir * step;
-      if (cop.x <= 14 || cop.x >= worldPx - 14) cop.dir *= -1;
-    }
-    cop.x = Math.max(14, Math.min(worldPx - 14, cop.x));
-    cop.y = Math.max(14, Math.min(worldPx - 14, cop.y));
-    cop.angle = cop.vertical
-      ? (cop.dir > 0 ? Math.PI / 2 : -Math.PI / 2)
-      : (cop.dir > 0 ? 0 : Math.PI);
+  function updateDog(d, dt) {
+    walkerStep(d, dt, null);
   }
 
   // ---------- Update ----------
@@ -596,13 +613,12 @@
       const vy = (my / len) * ROBBER_SPEED * dt;
       moveCircle(robber, vx, vy);
       robber.angle = Math.atan2(vy, vx);
-      // Blickrichtung auf Hauptachse rasten (4 Richtungen)
       if (Math.abs(mx) >= Math.abs(my)) { robber.fx = Math.sign(mx); robber.fy = 0; }
       else { robber.fx = 0; robber.fy = Math.sign(my); }
     }
     robber.target = frontHouse();
 
-    // Polizisten patrouillieren / auf Alarm reagieren
+    // Polizisten
     for (const cop of cops) {
       updateCop(cop, dt);
       if (copSeesRobber(cop)) {
@@ -612,7 +628,7 @@
       }
     }
 
-    // Hundespaziergänger: sehen sie den Räuber, verraten sie ihn
+    // Hunde
     for (const d of dogs) {
       updateDog(d, dt);
       if (dogSeesRobber(d)) {
@@ -627,7 +643,7 @@
     }
     if (report && report.until <= performance.now()) report = null;
 
-    // Alarmanlage: Sirene + HUD
+    // Alarm: Sirene + HUD
     const now = performance.now();
     const anyAlarm = houseList.some(h => h.alarmEnd > now);
     if (anyAlarm) { startSiren(); alarmInfoEl.textContent = '🚨 ALARM!'; }
@@ -654,26 +670,63 @@
   function updateHUD() {
     coinsEl.textContent = coins;
     robbedEl.textContent = robbedCount;
-    totalHousesEl.textContent = G * G;
+    totalHousesEl.textContent = houseList.length;
     mapSizeEl.textContent = `${G}×${G}`;
   }
 
   // ---------- Zeichnen ----------
   function draw() {
-    // Papier-Hintergrund (= Straßen)
-    ctx.fillStyle = '#e6dcc6';
+    // Blockgrund (Stadtplan-Papier)
+    ctx.fillStyle = '#e7e0cc';
     ctx.fillRect(0, 0, worldPx, worldPx);
 
-    // Skizzenhafte Straßen-Mittenlinien
-    ctx.strokeStyle = '#c9bb9c';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([8, 8]);
-    for (let i = 0; i <= 2 * G; i += 2) {
-      const c = (i + 0.5) * TILE;
-      ctx.beginPath(); ctx.moveTo(c, 0); ctx.lineTo(c, worldPx); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, c); ctx.lineTo(worldPx, c); ctx.stroke();
+    // Straßen (begehbare Kacheln)
+    ctx.fillStyle = '#f4f1e6';
+    for (let ty = 0; ty < WT; ty++)
+      for (let tx = 0; tx < WT; tx++)
+        if (walk[ty][tx]) ctx.fillRect(tx * TILE, ty * TILE, TILE, TILE);
+
+    // Straßen-Mittenlinien (wie im Plan)
+    ctx.strokeStyle = '#c8bfa4';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    const isCurve = (tx, ty) => walk[ty][tx] && tx % 2 === 1 && ty % 2 === 1;
+    for (let ty = 0; ty < WT; ty++) {
+      for (let tx = 0; tx < WT; tx++) {
+        if (!walk[ty][tx] || isCurve(tx, ty)) continue;
+        const c = tileCenter(tx, ty);
+        if (isWalk(tx + 1, ty) && !isCurve(tx + 1, ty)) {
+          const c2 = tileCenter(tx + 1, ty);
+          ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c2.x, c2.y); ctx.stroke();
+        }
+        if (isWalk(tx, ty + 1) && !isCurve(tx, ty + 1)) {
+          const c2 = tileCenter(tx, ty + 1);
+          ctx.beginPath(); ctx.moveTo(c.x, c.y); ctx.lineTo(c2.x, c2.y); ctx.stroke();
+        }
+      }
     }
-    ctx.setLineDash([]);
+    // Kurven als Bögen zeichnen
+    for (const ct of curveTiles) {
+      const dirs = [];
+      const cc = tileCenter(ct.tx, ct.ty);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (isWalk(ct.tx + dx, ct.ty + dy)) dirs.push([dx, dy]);
+      }
+      if (dirs.length === 2) {
+        const [d1, d2] = dirs;
+        const p1 = { x: cc.x + d1[0] * TILE, y: cc.y + d1[1] * TILE };
+        const p2 = { x: cc.x + d2[0] * TILE, y: cc.y + d2[1] * TILE };
+        // Kontrollpunkt zur Blockseite hin -> abgerundete Kurve
+        const ctrl = {
+          x: cc.x - (d1[0] + d2[0]) * TILE * 0.45,
+          y: cc.y - (d1[1] + d2[1]) * TILE * 0.45
+        };
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.quadraticCurveTo(ctrl.x, ctrl.y, p2.x, p2.y);
+        ctx.stroke();
+      }
+    }
 
     // Häuser
     for (const h of houseList) drawHouse(h);
@@ -713,7 +766,7 @@
       ctx.fillText('❓', report.x, report.y);
     }
 
-    // Partikel & Texte
+    // Partikel & schwebende Texte
     for (const p of particles) {
       ctx.globalAlpha = Math.max(0, p.life / 0.8);
       ctx.fillStyle = p.color;
@@ -753,13 +806,12 @@
     ctx.translate(-cx, -cy);
 
     const x = h.px + 4, y = h.py + 4, s = TILE - 8;
-    const m = 5; // Rand für Details
+    const m = 5;
 
     ctx.lineWidth = 2;
     ctx.strokeStyle = INK;
 
     if (h.type === 'haus') {
-      // Giebelhaus
       ctx.fillStyle = h.color;
       roundRect(x, y + s * 0.3, s, s * 0.7, 3); ctx.fill(); ctx.stroke();
       ctx.fillStyle = h.color2;
@@ -768,14 +820,12 @@
       ctx.lineTo(x + s / 2, y - 1);
       ctx.lineTo(x + s + 2, y + s * 0.32);
       ctx.closePath(); ctx.fill(); ctx.stroke();
-      // Tür + Fenster
       ctx.fillStyle = '#8d6e63';
       ctx.fillRect(x + s * 0.42, y + s * 0.55, s * 0.16, s * 0.45);
       ctx.fillStyle = '#b3e5fc';
       ctx.fillRect(x + s * 0.12, y + s * 0.45, s * 0.18, s * 0.18);
       ctx.strokeRect(x + s * 0.12, y + s * 0.45, s * 0.18, s * 0.18);
     } else if (h.type === 'blocks') {
-      // Mietshaus mit vielen Fenstern
       ctx.fillStyle = h.color;
       roundRect(x, y + 1, s, s - 2, 3); ctx.fill(); ctx.stroke();
       ctx.fillStyle = h.color2;
@@ -790,10 +840,8 @@
       ctx.fillStyle = '#8d6e63';
       ctx.fillRect(x + s / 2 - s * 0.08, y + s * 0.72, s * 0.16, s * 0.26);
     } else if (h.type === 'laden') {
-      // Laden mit Markise
       ctx.fillStyle = h.color;
       roundRect(x, y + s * 0.25, s, s * 0.75, 3); ctx.fill(); ctx.stroke();
-      // Markise (gestreift)
       ctx.fillStyle = h.color2;
       ctx.beginPath();
       ctx.moveTo(x - 1, y + s * 0.18);
@@ -806,17 +854,14 @@
         const lx = x + (s / 5) * i;
         ctx.beginPath(); ctx.moveTo(lx, y + s * 0.19); ctx.lineTo(lx - 2, y + s * 0.33); ctx.stroke();
       }
-      // Schaufenster + Tür
       ctx.fillStyle = '#b3e5fc';
       ctx.fillRect(x + s * 0.15, y + s * 0.48, s * 0.3, s * 0.3);
       ctx.strokeRect(x + s * 0.15, y + s * 0.48, s * 0.3, s * 0.3);
       ctx.fillStyle = '#8d6e63';
       ctx.fillRect(x + s * 0.62, y + s * 0.5, s * 0.18, s * 0.5);
-      // Ladenschild
       ctx.fillStyle = '#ffd54f';
       ctx.beginPath(); ctx.arc(x + s * 0.8, y + s * 0.14, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     } else { // 'turm'
-      // schlankes Türmchen
       ctx.fillStyle = h.color;
       roundRect(x + s * 0.2, y + s * 0.15, s * 0.6, s * 0.85, 3); ctx.fill(); ctx.stroke();
       ctx.fillStyle = h.color2;
@@ -831,14 +876,13 @@
       ctx.fillRect(x + s * 0.44, y + s * 0.66, s * 0.12, s * 0.3);
     }
 
-    // Münz-Badge auf unausgeraubten Häusern
+    // Münz-Badge
     if (!h.robbed) {
       ctx.fillStyle = '#ffd54f';
       ctx.strokeStyle = INK;
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(x + s - 4, y + 4, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     } else {
-      // ausgeraubt: abgedunkelt + Riss
       ctx.fillStyle = 'rgba(60,50,40,0.35)';
       roundRect(x, y, s, s, 3); ctx.fill();
       ctx.strokeStyle = INK;
@@ -847,7 +891,7 @@
       ctx.stroke();
     }
 
-    // Alarmanlage: blinkendes Licht + expandierender Ring
+    // Alarmanlage
     const now = performance.now();
     if (h.alarmEnd > now) {
       const p = (now - h.alarmStart) / ALARM_TIME;
@@ -866,9 +910,7 @@
     ctx.restore();
   }
 
-  function drawHouse(h) {
-    sketchHouse(h);
-  }
+  function drawHouse(h) { sketchHouse(h); }
 
   function drawCop(cop) {
     ctx.save();
@@ -890,19 +932,15 @@
     ctx.save();
     ctx.translate(d.x, d.y);
     ctx.rotate(d.angle);
-    // Körper
     ctx.fillStyle = '#a1887f';
     ctx.beginPath(); ctx.arc(0, 0, d.r, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#4e342e'; ctx.lineWidth = 2.5; ctx.stroke();
-    // Schnauze
     ctx.fillStyle = '#4e342e';
     ctx.beginPath();
     ctx.moveTo(d.r - 3, 0); ctx.lineTo(d.r + 5, -4); ctx.lineTo(d.r + 5, 4);
     ctx.closePath(); ctx.fill();
-    // Halsband
     ctx.strokeStyle = '#d32f2f'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(0, 0, d.r - 2, -0.6, 0.6); ctx.stroke();
-    // Auge
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(3, -4, 2.5, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#212121';
@@ -957,7 +995,7 @@
     if (k === ' ') {
       e.preventDefault();
       if (running && !caught) tryRob();
-      else if (caught) start(); // nach Spielende: Neustart per Leertaste
+      else if (caught) start();
     }
     if (['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
   });
